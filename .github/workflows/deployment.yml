@@ -3,7 +3,7 @@ name: Deploy PostgreSQL to oracleK8S
 on:
   push:
     branches:
-      - main
+      - master
 
 jobs:
   deploy:
