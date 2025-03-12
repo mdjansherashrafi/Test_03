@@ -51,22 +51,10 @@ jobs:
           echo "$KUBECONFIG_CONTENT" > $HOME/.kube/config
           chmod 600 $HOME/.kube/config
       
-      - name: Deploy PostgreSQL using Helm
+      - name: Deploy PostgreSQL to OKE
         run: |
-          curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
-          
-          # Add Bitnami Helm repository (contains PostgreSQL chart)
-          helm repo add bitnami https://charts.bitnami.com/bitnami
-          helm repo update
-          
-          # Deploy PostgreSQL
-          helm upgrade --install postgres bitnami/postgresql \
-            --namespace postgres-ns \
-            --create-namespace \
-            --set auth.postgresPassword=${{ secrets.POSTGRES_PASSWORD }} \
-            --set persistence.size=10Gi \
-            --set primary.service.type=LoadBalancer \
-            --wait
+          kubectl apply -f k8s/postgresql-deployment.yml
+          kubectl apply -f k8s/postgresql-service.yml
       
       - name: Verify deployment
         run: |
