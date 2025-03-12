@@ -1,9 +1,19 @@
-name: Deploy PostgreSQL to oracleK8S
+name: Deploy PostgreSQL to OKE
 
 on:
   push:
-    branches:
-      - master
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+env:
+  OCI_CLI_USER: ${{ secrets.OCI_CLI_USER }}
+  OCI_CLI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+  OCI_CLI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+  OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_CLI_KEY_CONTENT }}
+  OCI_CLI_REGION: ${{ secrets.OCI_CLI_REGION }}
+  KUBECONFIG_CONTENT: ${{ secrets.KUBECONFIG_CONTENT }}
 
 jobs:
   deploy:
@@ -11,28 +21,54 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Set up OCI CLI
-        uses: oracle/oci-cli-action@v2
-        with:
-          oci-cli-version: 'latest'
-
+        uses: actions/checkout@v3
+      
+      - name: Install OCI CLI
+        run: |
+          pip install oci-cli
+      
       - name: Configure OCI CLI
         run: |
           mkdir -p ~/.oci
-          echo "[DEFAULT]" > ~/.oci/config
-          echo "user=${{ secrets.OCI_USER }}" >> ~/.oci/config
-          echo "fingerprint=${{ secrets.OCI_FINGERPRINT }}" >> ~/.oci/config
-          echo "key_file=${{ secrets.OCI_PRIVATE_KEY }}" >> ~/.oci/config
-          echo "tenancy=${{ secrets.OCI_TENANCY }}" >> ~/.oci/config
-          echo "region=${{ secrets.OCI_REGION }}" >> ~/.oci/config
-
-      - name: Set up kubectl
+          echo "$OCI_CLI_KEY_CONTENT" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
+          
+          cat > ~/.oci/config << EOF
+          [DEFAULT]
+          user=$OCI_CLI_USER
+          fingerprint=$OCI_CLI_FINGERPRINT
+          tenancy=$OCI_CLI_TENANCY
+          region=$OCI_CLI_REGION
+          key_file=~/.oci/oci_api_key.pem
+          EOF
+      
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+      
+      - name: Set up kubeconfig
         run: |
-          oci ce cluster create-kubeconfig --cluster-id ${{ secrets.OCI_CLUSTER_OCID }} --file ~/.kube/config --region ${{ secrets.OCI_REGION }}
-
-      - name: Deploy PostgreSQL to OKE
+          mkdir -p $HOME/.kube
+          echo "$KUBECONFIG_CONTENT" > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+      
+      - name: Deploy PostgreSQL using Helm
         run: |
-          kubectl apply -f k8s/postgresql-deployment.yml
-          kubectl apply -f k8s/postgresql-service.yml
+          curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+          
+          # Add Bitnami Helm repository (contains PostgreSQL chart)
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo update
+          
+          # Deploy PostgreSQL
+          helm upgrade --install postgres bitnami/postgresql \
+            --namespace postgres-ns \
+            --create-namespace \
+            --set auth.postgresPassword=${{ secrets.POSTGRES_PASSWORD }} \
+            --set persistence.size=10Gi \
+            --set primary.service.type=LoadBalancer \
+            --wait
+      
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n postgres-ns
+          kubectl get svc -n postgres-ns
